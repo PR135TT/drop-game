@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Honey Drop Tap Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: linear-gradient(135deg, #1a0f2e 0%, #2d1b4e 100%);
+            font-family: system-ui, -apple-system, sans-serif;
+            touch-action: manipulation;
+        }
+        #loading-screen {
+            position: fixed;
+            inset: 0;
+            background: #1a0f2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loader {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #1a0f2e;
+            border-top: 3px solid #FFA726;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        #start-screen {
+            position: fixed;
+            inset: 0;
+            background: #1a0f2e;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+        }
+        .start-button {
+            padding: 15px 30px;
+            font-size: 24px;
+            background: #FFA726;
+            border: none;
+            border-radius: 25px;
+            color: #fff;
+            cursor: pointer;
+            transform: translateZ(0);
+        }
+        .start-button:active {
+            transform: scale(0.95) translateZ(0);
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+        }
+        .honey-drop {
+            position: absolute;
+            width: 30px;
+            height: 40px;
+            background: #FFA726;
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            transform: translateZ(0);
+        }
+        .bee {
+            position: absolute;
+            width: 30px;
+            height: 20px;
+            background: #FFD700;
+            border-radius: 20px;
+            transform: translateZ(0);
+        }
+        .bee::before, .bee::after {
+            content: '';
+            position: absolute;
+            top: 5px;
+            width: 100%;
+            height: 2px;
+            background: #000;
+        }
+        #score-display, #eun-display {
+            position: absolute;
+            top: 20px;
+            padding: 10px;
+            color: #FFA726;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #score-display { left: 20px; }
+        #eun-display { right: 20px; }
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <div class="loader"></div>
+    </div>
+
+    <div id="start-screen">
+        <button class="start-button">START GAME</button>
+    </div>
+
+    <div id="game-container">
+        <div id="score-display">Score: 0</div>
+        <div id="eun-display">Eun: 0</div>
+        <div id="game-over">
+            <h2>Congratulations!</h2>
+            <p>You earned Eun!</p>
+            <button onclick="restartGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        const config = {
+            dropSpeed: 2,
+            baseDropInterval: 1200,
+            scoreTarget: 100,
+            speedIncrease: 0.1,
+            maxSpeedMultiplier: 8,
+            columns: 5,
+            beeSpawnInterval: [3000, 6000],
+            beeSpeed: 3
+        };
+
+        let gameState = {
+            score: 0,
+            eun: 0,
+            isGameOver: false,
+            speedMultiplier: 1,
+            activeColumns: new Set(),
+            beeTimeout: null
+        };
+
+        const loadingScreen = document.getElementById('loading-screen');
+        const startScreen = document.getElementById('start-screen');
+        const container = document.getElementById('game-container');
+        const scoreDisplay = document.getElementById('score-display');
+        const eunDisplay = document.getElementById('eun-display');
+        const gameOverScreen = document.getElementById('game-over');
+        const startButton = document.querySelector('.start-button');
+        let dropCreationInterval;
+
+        function init() {
+            loadingScreen.style.display = 'none';
+            startScreen.style.display = 'flex';
+            
+            startButton.addEventListener('click', () => {
+                startScreen.style.display = 'none';
+                container.style.display = 'block';
+                startGame();
+            });
+        }
+
+        function getAvailableColumn() {
+            let column;
+            do {
+                column = Math.floor(Math.random() * config.columns);
+            } while (gameState.activeColumns.has(column));
+            return column;
+        }
+
+        function createHoneyDrop() {
+            if (gameState.isGameOver) return;
+
+            const column = getAvailableColumn();
+            gameState.activeColumns.add(column);
+
+            const drop = document.createElement('div');
+            drop.className = 'honey-drop';
+            
+            const columnWidth = window.innerWidth / config.columns;
+            const startX = (column * columnWidth) + (columnWidth - 30) / 2;
+            
+            drop.style.left = startX + 'px';
+            drop.style.top = '-40px';
+            drop.dataset.column = column;
+
+            drop.addEventListener('touchstart', tapDrop, {passive: true});
+            drop.addEventListener('mousedown', tapDrop);
+
+            container.appendChild(drop);
+            requestAnimationFrame(() => animateDrop(drop));
+        }
+
+        function animateDrop(drop) {
+            let position = -40;
+            let lastTime = performance.now();
+            
+            function fall(currentTime) {
+                if (gameState.isGameOver) return;
+
+                const deltaTime = currentTime - lastTime;
+                lastTime = currentTime;
+                
+                position += (config.dropSpeed * gameState.speedMultiplier * deltaTime) / 16;
+                drop.style.top = position + 'px';
+
+                if (position > window.innerHeight) {
+                    gameState.activeColumns.delete(parseInt(drop.dataset.column));
+                    drop.remove();
+                } else {
+                    requestAnimationFrame(fall);
+                }
+            }
+
+            requestAnimationFrame(fall);
+        }
+
+        function spawnBee() {
+            if (gameState.isGameOver) return;
+
+            const bee = document.createElement('div');
+            bee.className = 'bee';
+            
+            const startFromLeft = Math.random() < 0.5;
+            const startX = startFromLeft ? -30 : window.innerWidth;
+            const startY = Math.random() * (window.innerHeight - 100) + 50;
+            
+            bee.style.left = startX + 'px';
+            bee.style.top = startY + 'px';
+            
+            container.appendChild(bee);
+            
+            let position = startX;
+            const direction = startFromLeft ? 1 : -1;
+            let lastTime = performance.now();
+            
+            function moveBee(currentTime) {
+                const deltaTime = currentTime - lastTime;
+                lastTime = currentTime;
+                
+                position += (config.beeSpeed * direction * deltaTime) / 16;
+                bee.style.left = position + 'px';
+                
+                if ((direction === 1 && position < window.innerWidth + 30) || 
+                    (direction === -1 && position > -30)) {
+                    requestAnimationFrame(moveBee);
+                } else {
+                    bee.remove();
+                }
+            }
+            
+            requestAnimationFrame(moveBee);
+            
+            gameState.beeTimeout = setTimeout(spawnBee, 
+                Math.random() * (config.beeSpawnInterval[1] - config.beeSpawnInterval[0]) + 
+                config.beeSpawnInterval[0]);
+        }
+
+        function tapDrop(event) {
+            const drop = event.target;
+            
+            if (gameState.speedMultiplier < config.maxSpeedMultiplier) {
+                gameState.speedMultiplier = Math.min(
+                    gameState.speedMultiplier + config.speedIncrease,
+                    config.maxSpeedMultiplier
+                );
+            }
+
+            gameState.score++;
+            scoreDisplay.textContent = `Score: ${gameState.score}`;
+
+            gameState.activeColumns.delete(parseInt(drop.dataset.column));
+            drop.remove();
+
+            if (gameState.score >= config.scoreTarget) {
+                endGame();
+            }
+        }
+
+        function endGame() {
+            gameState.isGameOver = true;
+            gameState.eun++;
+            eunDisplay.textContent = `Eun: ${gameState.eun}`;
+            gameOverScreen.style.display = 'block';
+            
+            clearInterval(dropCreationInterval);
+            clearTimeout(gameState.beeTimeout);
+        }
+
+        function restartGame() {
+            const elements = document.querySelectorAll('.honey-drop, .bee');
+            elements.forEach(el => el.remove());
+
+            gameState.score = 0;
+            gameState.isGameOver = false;
+            gameState.speedMultiplier = 1;
+            gameState.activeColumns.clear();
+            
+            scoreDisplay.textContent = 'Score: 0';
+            gameOverScreen.style.display = 'none';
+
+            startGame();
+        }
+
+        function startGame() {
+            dropCreationInterval = setInterval(createHoneyDrop, config.baseDropInterval);
+            spawnBee();
+        }
+
+        // Initialize game
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
